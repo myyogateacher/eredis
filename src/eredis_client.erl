@@ -475,7 +475,7 @@ parse_sentinel(Sentinel) ->
 read_sentinels([], Acc) -> Acc;
 read_sentinels([Sentinel | Rest], Acc) ->
     Parsed = parse_sentinel(Sentinel),
-    read_sentinels(Rest, [Acc | Parsed]).
+    read_sentinels(Rest, [Parsed | Acc]).
 
 read_database(undefined) ->
     undefined;
