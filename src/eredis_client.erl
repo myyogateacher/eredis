@@ -350,7 +350,7 @@ get_master([{Host, Port} | Sentinels], MasterId, State) ->
         end,
     case Result of
         {ok, RH, RP} ->
-            error_logger:info_msg("eredis: Redis: Found: ~p~n", [RH, RP]),
+            error_logger:info_msg("eredis: Redis: Found: ~p:~p~n", [RH, RP]),
             connect_redis(RH, RP, State);
         Error ->
             error_logger:error_msg("eredis: Failed Sentinel: ~p:~p ~p~n", [Host, Port, Error]),
