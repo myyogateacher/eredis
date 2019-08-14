@@ -1,4 +1,6 @@
 ebin/*
+_rel
+.erlang.mk/
 .eunit
 *~
 Emakefile

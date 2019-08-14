@@ -328,29 +328,33 @@ get_master(Socket, MasterId) ->
                     ParserState = eredis_parser:init(),
                     {ok, [H, P], _} = eredis_parser:parse(ParserState, Data),
                     {ok, binary_to_list(H), binary_to_integer(P)};
-                _ ->
-                    error
+                Err ->
+                    Err
             end;
-        _ ->
-            error
+        Err ->
+            Err
     end.
 
 get_master([], _, _) ->
     {error, {sentinel_error, unreachable}};
 get_master([{Host, Port} | Sentinels], MasterId, State) ->
     Result =
-        case open_conn(Host, Port, State) of
+        case catch open_conn(Host, Port, State) of
             {ok, Socket} ->
                 ok = inet:setopts(Socket, [{active, false}]),
                 Res = get_master(Socket, MasterId),
                 catch gen_tcp:close(Socket),
                 Res;
-            _ ->
-                error
+            Err ->
+                Err
         end,
     case Result of
-        {ok, RH, RP} -> connect_redis(RH, RP, State);
-        _ -> get_master(Sentinels, MasterId, State)
+        {ok, RH, RP} ->
+            error_logger:info_msg("eredis: Redis: Found: ~p~n", [RH, RP]),
+            connect_redis(RH, RP, State);
+        Error ->
+            error_logger:error_msg("eredis: Failed Sentinel: ~p:~p ~p~n", [Host, Port, Error]),
+            get_master(Sentinels, MasterId, State)
     end.
 
 connect(#state{sentinels = false, host = Host, port = Port} = State) ->
