@@ -25,7 +25,7 @@
 -include("eredis.hrl").
 
 %% API
--export([start_link/7, stop/1, select_database/2]).
+-export([start_link/1, stop/1, select_database/2]).
 
 -export([do_sync_command/2]).
 
@@ -36,6 +36,8 @@
 -record(state, {
           host :: string() | undefined,
           port :: integer() | undefined,
+          sentinels :: list() | false,
+          sentinel_master_id :: list(),
           password :: binary() | undefined,
           database :: binary() | undefined,
           reconnect_sleep :: reconnect_sleep() | undefined,
@@ -51,17 +53,9 @@
 %% API
 %%
 
--spec start_link(Host::list(),
-                 Port::integer(),
-                 Database::integer() | undefined,
-                 Password::string(),
-                 ReconnectSleep::reconnect_sleep(),
-                 ConnectTimeout::integer() | undefined,
-                 SocketOptions::list()) ->
-                        {ok, Pid::pid()} | {error, Reason::term()}.
-start_link(Host, Port, Database, Password, ReconnectSleep, ConnectTimeout, SocketOptions) ->
-    gen_server:start_link(?MODULE, [Host, Port, Database, Password,
-                                    ReconnectSleep, ConnectTimeout, SocketOptions], []).
+-spec start_link(Opts :: list(tuple())) -> {ok, Pid::pid()} | {error, Reason::term()}.
+start_link(Opts) ->
+    gen_server:start_link(?MODULE, Opts, []).
 
 
 stop(Pid) ->
@@ -71,9 +65,21 @@ stop(Pid) ->
 %% gen_server callbacks
 %%====================================================================
 
-init([Host, Port, Database, Password, ReconnectSleep, ConnectTimeout, SocketOptions]) ->
+init(Opts) ->
+    Host = proplists:get_value(host, Opts, "127.0.0.1"),
+    Port = proplists:get_value(port, Opts, 6379),
+    Sentinels = proplists:get_value(sentinels, Opts, false),
+    Database = proplists:get_value(database, Opts, 0),
+    Password = proplists:get_value(password, Opts, ""),
+    ReconnectSleep = proplists:get_value(reconnect_sleep, Opts, 100),
+    ConnectTimeout = proplists:get_value(connect_timeout, Opts, ?TIMEOUT),
+    SocketOptions = proplists:get_value(socket_options, Opts, []),
+    MasterId = proplists:get_value(sentinel_master_id, Opts, "mymaster"),
+
     State = #state{host = Host,
                    port = Port,
+                   sentinels = read_sentinels(Sentinels),
+                   sentinel_master_id = MasterId,
                    database = read_database(Database),
                    password = list_to_binary(Password),
                    reconnect_sleep = ReconnectSleep,
@@ -105,7 +111,6 @@ handle_call(stop, _From, State) ->
 
 handle_call(_Request, _From, State) ->
     {reply, unknown_request, State}.
-
 
 handle_cast({request, Req}, State) ->
     case do_request(Req, undefined, State) of
@@ -303,17 +308,58 @@ safe_send(Pid, Value) ->
 %% the correct database. These commands are synchronous and if Redis
 %% returns something we don't expect, we crash. Returns {ok, State} or
 %% {SomeError, Reason}.
-connect(State) ->
-    {ok, {AFamily, Addr}} = get_addr(State#state.host),
+open_conn(Host, Port, State) ->
+    {ok, {AFamily, Addr}} = get_addr(Host),
     Port = case AFamily of
         local -> 0;
-        _ -> State#state.port
+        _ -> Port
     end,
 
     SocketOptions = lists:ukeymerge(1, lists:keysort(1, State#state.socket_options), lists:keysort(1, ?SOCKET_OPTS)),
     ConnectOptions = [AFamily | [?SOCKET_MODE | SocketOptions]],
+    gen_tcp:connect(Addr, Port, ConnectOptions, State#state.connect_timeout).
 
-    case gen_tcp:connect(Addr, Port, ConnectOptions, State#state.connect_timeout) of
+get_master(Socket, MasterId) ->
+    Command = ["SENTINEL get-master-addr-by-name ", MasterId, "\r\n"],
+    case gen_tcp:send(Socket, Command) of
+        ok ->
+            case gen_tcp:recv(Socket, 0, ?RECV_TIMEOUT) of
+                {ok, Data} ->
+                    ParserState = eredis_parser:init(),
+                    {ok, [H, P], _} = eredis_parser:parse(ParserState, Data),
+                    {ok, binary_to_list(H), binary_to_integer(P)};
+                _ ->
+                    error
+            end;
+        _ ->
+            error
+    end.
+
+get_master([], _, _) ->
+    {error, {sentinel_error, unreachable}};
+get_master([{Host, Port} | Sentinels], MasterId, State) ->
+    Result =
+        case open_conn(Host, Port, State) of
+            {ok, Socket} ->
+                ok = inet:setopts(Socket, [{active, false}]),
+                Res = get_master(Socket, MasterId),
+                catch gen_tcp:close(Socket),
+                Res;
+            _ ->
+                error
+        end,
+    case Result of
+        {ok, RH, RP} -> connect_redis(RH, RP, State);
+        _ -> get_master(Sentinels, MasterId, State)
+    end.
+
+connect(#state{sentinels = false, host = Host, port = Port} = State) ->
+    connect_redis(Host, Port, State);
+connect(#state{sentinels = Sentinels, sentinel_master_id = MasterId} = State) ->
+    get_master(Sentinels, MasterId, State).
+
+connect_redis(Host, Port, State) ->
+    case open_conn(Host, Port, State) of
         {ok, Socket} ->
             case authenticate(Socket, State#state.password) of
                 ok ->
@@ -417,16 +463,28 @@ reconnect_loop(Client, #state{reconnect_sleep = ReconnectSleep} = State) ->
             reconnect_loop(Client, State)
     end.
 
+read_sentinels(Sentinels) ->
+    read_sentinels(Sentinels, []).
+
+parse_sentinel(Sentinel) ->
+    case string:split(Sentinel, ":") of
+        [SH] -> {SH, 26379};
+        [SH, SPort] -> {SH, list_to_integer(SPort)}
+    end.
+
+read_sentinels([], Acc) -> Acc;
+read_sentinels([Sentinel | Rest], Acc) ->
+    Parsed = parse_sentinel(Sentinel),
+    read_sentinels(Rest, [Acc | Parsed]).
+
 read_database(undefined) ->
     undefined;
 read_database(Database) when is_integer(Database) ->
     list_to_binary(integer_to_list(Database)).
 
-
 get_all_messages(Acc) ->
     receive
-        M ->
-            [M | Acc]
+        M -> [M | Acc]
     after 0 ->
         lists:reverse(Acc)
     end.
