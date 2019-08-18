@@ -68,7 +68,7 @@ stop(Pid) ->
 init(Opts) ->
     Host = proplists:get_value(host, Opts, "127.0.0.1"),
     Port = proplists:get_value(port, Opts, 6379),
-    Sentinels = proplists:get_value(sentinels, Opts, false),
+    Sentinels = proplists:get_value(sentinels, Opts, []),
     Database = proplists:get_value(database, Opts, 0),
     Password = proplists:get_value(password, Opts, ""),
     ReconnectSleep = proplists:get_value(reconnect_sleep, Opts, 100),
@@ -467,6 +467,7 @@ reconnect_loop(Client, #state{reconnect_sleep = ReconnectSleep} = State) ->
             reconnect_loop(Client, State)
     end.
 
+read_sentinels([]) -> false;
 read_sentinels(Sentinels) ->
     read_sentinels(Sentinels, []).
 
