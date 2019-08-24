@@ -68,7 +68,7 @@ stop(Pid) ->
 init(Opts) ->
     Host = proplists:get_value(host, Opts, "127.0.0.1"),
     Port = proplists:get_value(port, Opts, 6379),
-    Sentinels = proplists:get_value(sentinels, Opts, false),
+    Sentinels = proplists:get_value(sentinels, Opts, []),
     Database = proplists:get_value(database, Opts, 0),
     Password = proplists:get_value(password, Opts, ""),
     ReconnectSleep = proplists:get_value(reconnect_sleep, Opts, 100),
@@ -350,7 +350,6 @@ get_master([{Host, Port} | Sentinels], MasterId, State) ->
         end,
     case Result of
         {ok, RH, RP} ->
-            error_logger:info_msg("eredis: Redis: Found: ~p:~p~n", [RH, RP]),
             connect_redis(RH, RP, State);
         Error ->
             error_logger:error_msg("eredis: Failed Sentinel: ~p:~p ~p~n", [Host, Port, Error]),
@@ -369,6 +368,7 @@ connect_redis(Host, Port, State) ->
                 ok ->
                     case select_database(Socket, State#state.database) of
                         ok ->
+                            error_logger:info_msg("eredis: connected: ~p:~p~n", [Host, Port]),
                             {ok, State#state{socket = Socket}};
                         {error, Reason} ->
                             {error, {select_error, Reason}}
@@ -467,6 +467,7 @@ reconnect_loop(Client, #state{reconnect_sleep = ReconnectSleep} = State) ->
             reconnect_loop(Client, State)
     end.
 
+read_sentinels([]) -> false;
 read_sentinels(Sentinels) ->
     read_sentinels(Sentinels, []).
 
