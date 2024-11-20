@@ -81,7 +81,7 @@ init(Opts) ->
                    sentinels = read_sentinels(Sentinels),
                    sentinel_master_id = MasterId,
                    database = read_database(Database),
-                   password = list_to_binary(Password),
+                   password = to_binary(Password),
                    reconnect_sleep = ReconnectSleep,
                    connect_timeout = ConnectTimeout,
                    socket_options = SocketOptions,
@@ -309,15 +309,9 @@ safe_send(Pid, Value) ->
 %% returns something we don't expect, we crash. Returns {ok, State} or
 %% {SomeError, Reason}.
 open_conn(Host, Port, State) ->
-    {ok, {AFamily, Addr}} = get_addr(Host),
-    Port = case AFamily of
-        local -> 0;
-        _ -> Port
-    end,
-
     SocketOptions = lists:ukeymerge(1, lists:keysort(1, State#state.socket_options), lists:keysort(1, ?SOCKET_OPTS)),
-    ConnectOptions = [AFamily | [?SOCKET_MODE | SocketOptions]],
-    gen_tcp:connect(Addr, Port, ConnectOptions, State#state.connect_timeout).
+    ConnectOptions = [[?SOCKET_MODE | SocketOptions]],
+    gen_tcp:connect(Host, Port, ConnectOptions, State#state.connect_timeout).
 
 get_master(Socket, MasterId) ->
     Command = ["SENTINEL get-master-addr-by-name ", MasterId, "\r\n"],
@@ -378,23 +372,6 @@ connect_redis(Host, Port, State) ->
             end;
         {error, Reason} ->
             {error, {connection_error, Reason}}
-    end.
-
-get_addr({local, Path}) ->
-    {ok, {local, {local, Path}}};
-get_addr(Hostname) ->
-    case inet:parse_address(Hostname) of
-        {ok, {_,_,_,_} = Addr} ->         {ok, {inet, Addr}};
-        {ok, {_,_,_,_,_,_,_,_} = Addr} -> {ok, {inet6, Addr}};
-        {error, einval} ->
-            case inet:getaddr(Hostname, inet6) of
-                 {error, _} ->
-                     case inet:getaddr(Hostname, inet) of
-                         {ok, Addr}-> {ok, {inet, Addr}};
-                         {error, _} = Res -> Res
-                     end;
-                 {ok, Addr} -> {ok, {inet6, Addr}}
-            end
     end.
 
 select_database(_Socket, undefined) ->
@@ -493,3 +470,10 @@ get_all_messages(Acc) ->
     after 0 ->
         lists:reverse(Acc)
     end.
+
+to_binary(B) when is_binary(B) -> B;
+to_binary(A) when is_atom(A) -> erlang:atom_to_binary(A, utf8);
+to_binary(I) when is_integer(I) -> erlang:integer_to_binary(I);
+to_binary(L) when is_list(L) -> erlang:list_to_binary(L);
+to_binary(P) when is_pid(P) -> erlang:list_to_binary(erlang:pid_to_list(P));
+to_binary(T) -> erlang:term_to_binary(T).
