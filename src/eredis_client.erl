@@ -310,7 +310,7 @@ safe_send(Pid, Value) ->
 %% {SomeError, Reason}.
 open_conn(Host, Port, State) ->
     SocketOptions = lists:ukeymerge(1, lists:keysort(1, State#state.socket_options), lists:keysort(1, ?SOCKET_OPTS)),
-    ConnectOptions = [[?SOCKET_MODE | SocketOptions]],
+    ConnectOptions = [?SOCKET_MODE | SocketOptions],
     gen_tcp:connect(Host, Port, ConnectOptions, State#state.connect_timeout).
 
 get_master(Socket, MasterId) ->
@@ -462,7 +462,7 @@ read_sentinels([Sentinel | Rest], Acc) ->
 read_database(undefined) ->
     undefined;
 read_database(Database) when is_integer(Database) ->
-    list_to_binary(integer_to_list(Database)).
+    to_binary(Database).
 
 get_all_messages(Acc) ->
     receive
