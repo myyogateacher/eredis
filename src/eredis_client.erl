@@ -76,7 +76,7 @@ init(Opts) ->
     SocketOptions = proplists:get_value(socket_options, Opts, []),
     MasterId = proplists:get_value(sentinel_master_id, Opts, "mymaster"),
 
-    State = #state{host = Host,
+    State = #state{host = to_list(Host),
                    port = Port,
                    sentinels = read_sentinels(Sentinels),
                    sentinel_master_id = MasterId,
@@ -477,3 +477,6 @@ to_binary(I) when is_integer(I) -> erlang:integer_to_binary(I);
 to_binary(L) when is_list(L) -> erlang:list_to_binary(L);
 to_binary(P) when is_pid(P) -> erlang:list_to_binary(erlang:pid_to_list(P));
 to_binary(T) -> erlang:term_to_binary(T).
+
+to_list(B) when is_binary(B) -> erlang:binary_to_list(B);
+to_list(L) -> L.
